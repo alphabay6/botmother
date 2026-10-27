@@ -389,3 +389,85 @@ def handle_git_clone(git_url, user_id, bot, chat_id):
                 try: func(path)
                 except Exception: pass
             shutil.rmtree(temp_dir, onerror=remove_readonly)
+
+
+def extract_zip_and_list_files(file_content, zip_name, user_id, bot, chat_id):
+    """
+    Extract a ZIP file and return a list of all runnable (.py/.js) files.
+    Returns (files_list, extracted_path) or None on error.
+    Used by the smart ZIP picker — user selects which file to run.
+    """
+    import time as _time
+    temp_dir = None
+    try:
+        base_temp = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'zip_extracts')
+        os.makedirs(base_temp, exist_ok=True)
+        temp_dir = os.path.join(base_temp, f"user_{user_id}_{int(_time.time())}")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        zip_path = os.path.join(temp_dir, zip_name)
+        with open(zip_path, 'wb') as f:
+            f.write(file_content)
+
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            for member in zip_ref.infolist():
+                member_path = os.path.abspath(os.path.join(temp_dir, member.filename))
+                if not member_path.startswith(os.path.abspath(temp_dir)):
+                    raise zipfile.BadZipFile(f"Unsafe path in zip: {member.filename}")
+            zip_ref.extractall(temp_dir)
+
+        extracted = os.listdir(temp_dir)
+
+        # Install deps
+        if 'requirements.txt' in extracted:
+            req_path = os.path.join(temp_dir, 'requirements.txt')
+            bot.send_message(chat_id, "\U0001f4e6 Installing Python dependencies from ZIP...")
+            try:
+                subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', req_path],
+                               capture_output=True, text=True, check=True,
+                               encoding='utf-8', errors='ignore', timeout=120)
+                bot.send_message(chat_id, "\u2705 Dependencies installed.")
+            except subprocess.CalledProcessError as e:
+                error = (e.stderr or e.stdout)[:400]
+                bot.send_message(chat_id, f"\u26a0\ufe0f Dep install warning:\n```\n{error}\n```", parse_mode='Markdown')
+
+        if 'package.json' in extracted:
+            bot.send_message(chat_id, "\U0001f4e6 Installing Node.js dependencies...")
+            try:
+                subprocess.run(['npm', 'install'], cwd=temp_dir, capture_output=True,
+                               text=True, check=True, encoding='utf-8', errors='ignore', timeout=120)
+                bot.send_message(chat_id, "\u2705 Node deps installed.")
+            except FileNotFoundError:
+                bot.send_message(chat_id, "\u26a0\ufe0f `npm` not found. Skipping.")
+            except subprocess.CalledProcessError as e:
+                error = (e.stderr or e.stdout)[:400]
+                bot.send_message(chat_id, f"\u26a0\ufe0f Node install warning:\n```\n{error}\n```", parse_mode='Markdown')
+
+        # Collect all runnable files recursively
+        runnable_files = []
+        for root, dirs, files in os.walk(temp_dir):
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('node_modules', '__pycache__')]
+            for fname in sorted(files):
+                if fname.endswith('.py') or fname.endswith('.js'):
+                    rel_path = os.path.relpath(os.path.join(root, fname), temp_dir)
+                    runnable_files.append(rel_path.replace('\\', '/'))
+
+        if not runnable_files:
+            bot.send_message(chat_id, "\u274c No `.py` or `.js` files found in the ZIP archive!")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None
+
+        logger.info(f"ZIP extracted for user {user_id}: {len(runnable_files)} runnable files found")
+        return runnable_files, temp_dir
+
+    except zipfile.BadZipFile as e:
+        bot.send_message(chat_id, f"\u274c Invalid ZIP file: {e}")
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return None
+    except Exception as e:
+        logger.error(f"Error extracting ZIP for {user_id}: {e}", exc_info=True)
+        bot.send_message(chat_id, f"\u274c Error extracting ZIP: {str(e)}")
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return None

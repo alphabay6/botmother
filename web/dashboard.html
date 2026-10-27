@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BotMother — Admin Dashboard</title>
+  <meta name="description" content="BotMother Bot Hosting Admin Control Panel">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-inner">
+        <div class="logo-icon">🤖</div>
+        <div>
+          <h2>BotMother</h2>
+          <span>Admin Panel</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <div class="nav-section-title">Overview</div>
+        <div class="nav-item active" onclick="showSection('dashboard')">
+          <span class="icon">📊</span> Dashboard
+        </div>
+        <div class="nav-item" onclick="showSection('scripts')">
+          <span class="icon">🟢</span> Running Scripts
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">Management</div>
+        <div class="nav-item" onclick="showSection('users')">
+          <span class="icon">👥</span> Users
+        </div>
+        <div class="nav-item" onclick="showSection('pending')">
+          <span class="icon">📋</span> Pending Files
+          <span id="pending-badge" class="badge badge-warning" style="margin-left:auto;display:none">0</span>
+        </div>
+        <div class="nav-item" onclick="showSection('subscriptions')">
+          <span class="icon">⭐</span> Subscriptions
+        </div>
+        <div class="nav-item" onclick="showSection('referrals')">
+          <span class="icon">👥</span> Referrals
+        </div>
+        <div class="nav-item" onclick="showSection('bans')">
+          <span class="icon">🚫</span> Banned Users
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">Communication</div>
+        <div class="nav-item" onclick="showSection('broadcast')">
+          <span class="icon">📢</span> Broadcast
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">System</div>
+        <div class="nav-item" onclick="showSection('settings')">
+          <span class="icon">⚙️</span> Settings
+        </div>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <span class="status-dot"></span>
+        <span style="font-size:12px;color:var(--text-secondary)">Bot Online</span>
+        <span id="uptime-badge" style="font-size:11px;color:var(--text-muted);margin-left:auto"></span>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="logout()" style="width:100%">
+        🚪 Logout
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <header class="topbar">
+      <h1 id="page-title">📊 Dashboard</h1>
+      <div class="topbar-actions">
+        <button class="btn btn-sm" id="refresh-btn" onclick="refreshData()" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary)">
+          🔄 Refresh
+        </button>
+        <div style="font-size:12px;color:var(--text-muted)" id="last-updated"></div>
+      </div>
+    </header>
+
+    <div class="page-content">
+
+      <!-- ===== DASHBOARD SECTION ===== -->
+      <div class="section active" id="section-dashboard">
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card accent">
+            <div class="icon">👥</div>
+            <div class="label">Total Users</div>
+            <div class="value" id="stat-users">—</div>
+          </div>
+          <div class="stat-card success">
+            <div class="icon">🟢</div>
+            <div class="label">Running Scripts</div>
+            <div class="value" id="stat-running">—</div>
+          </div>
+          <div class="stat-card warning">
+            <div class="icon">📋</div>
+            <div class="label">Pending Files</div>
+            <div class="value" id="stat-pending">—</div>
+          </div>
+          <div class="stat-card info">
+            <div class="icon">🆓</div>
+            <div class="label">Active Trials</div>
+            <div class="value" id="stat-trials">—</div>
+          </div>
+          <div class="stat-card danger">
+            <div class="icon">🚫</div>
+            <div class="label">Banned Users</div>
+            <div class="value" id="stat-banned">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="icon">📁</div>
+            <div class="label">Total Files</div>
+            <div class="value" id="stat-files">—</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+          <!-- System Resources -->
+          <div class="card">
+            <div class="card-header">
+              <h3>🖥️ Server Resources</h3>
+              <span class="badge badge-success" id="bot-lock-badge">🔓 Unlocked</span>
+            </div>
+            <div class="card-body">
+              <div class="resource-label">
+                <span>CPU Usage</span><span id="cpu-val">—</span>
+              </div>
+              <div class="resource-bar"><div class="resource-bar-fill cpu" id="cpu-bar" style="width:0%"></div></div>
+
+              <div class="resource-label" style="margin-top:14px">
+                <span>RAM Usage</span><span id="ram-val">—</span>
+              </div>
+              <div class="resource-bar"><div class="resource-bar-fill ram" id="ram-bar" style="width:0%"></div></div>
+
+              <div class="resource-label" style="margin-top:14px">
+                <span>Disk Usage</span><span id="disk-val">—</span>
+              </div>
+              <div class="resource-bar"><div class="resource-bar-fill disk" id="disk-bar" style="width:0%"></div></div>
+            </div>
+          </div>
+
+          <!-- Bot Status -->
+          <div class="card">
+            <div class="card-header"><h3>🤖 Bot Status</h3></div>
+            <div class="card-body">
+              <div class="toggle-wrap">
+                <div class="toggle-label">
+                  <h4>Bot Lock</h4>
+                  <p>Lock prevents regular users from using the bot</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-lock" onchange="toggleLock()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-wrap">
+                <div class="toggle-label">
+                  <h4>Maintenance Mode</h4>
+                  <p>Show maintenance message to all non-admin users</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="toggle-maintenance" onchange="toggleMaintenance()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div style="margin-top:16px">
+                <div class="resource-label">
+                  <span>Uptime</span><span id="uptime-text">—</span>
+                </div>
+                <div class="resource-label" style="margin-top:8px">
+                  <span>Maintenance Msg</span>
+                </div>
+                <div id="maint-msg-text" style="font-size:12px;color:var(--text-muted);margin-top:4px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Scripts -->
+        <div class="card" style="margin-top:20px">
+          <div class="card-header">
+            <h3>🟢 Active Scripts</h3>
+            <span id="running-count-badge" class="badge badge-success">0 running</span>
+          </div>
+          <div class="card-body table-wrap">
+            <table id="scripts-table">
+              <thead>
+                <tr>
+                  <th>File</th><th>Type</th><th>User ID</th><th>PID</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="scripts-tbody">
+                <tr><td colspan="5" class="loader">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== SCRIPTS SECTION ===== -->
+      <div class="section" id="section-scripts">
+        <div class="card">
+          <div class="card-header">
+            <h3>🟢 All Running Scripts</h3>
+            <button class="btn btn-sm btn-success" onclick="refreshData()">🔄 Refresh</button>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Type</th><th>User ID</th><th>PID</th></tr></thead>
+              <tbody id="all-scripts-tbody"><tr><td colspan="4" class="loader">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== USERS SECTION ===== -->
+      <div class="section" id="section-users">
+        <div class="card">
+          <div class="card-header">
+            <h3>👥 All Users</h3>
+            <div class="search-wrap">
+              <input class="search-input" id="user-search" placeholder="Search user ID..." oninput="filterUsers()">
+            </div>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>User ID</th><th>Status</th><th>Files</th><th>Trial</th><th>Referrals</th><th>Extra Slots</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody"><tr><td colspan="7" class="loader">⏳ Loading users...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Give Subscription Modal -->
+        <div class="modal-overlay" id="sub-modal">
+          <div class="modal">
+            <h3>⭐ Give Subscription</h3>
+            <input type="hidden" id="sub-user-id">
+            <div class="form-group">
+              <label>Subscription Duration (days)</label>
+              <input type="number" class="form-input" id="sub-days" value="30" min="1" max="3650">
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-sm" onclick="closeModal('sub-modal')" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary)">Cancel</button>
+              <button class="btn btn-sm btn-success" onclick="giveSubscription()">✅ Give Subscription</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== PENDING FILES SECTION ===== -->
+      <div class="section" id="section-pending">
+        <div class="card">
+          <div class="card-header">
+            <h3>📋 Pending Approval Files</h3>
+            <button class="btn btn-sm" onclick="loadPending()" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary)">🔄 Refresh</button>
+          </div>
+          <div class="card-body" id="pending-list">
+            <div class="loader">⏳ Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== SUBSCRIPTIONS SECTION ===== -->
+      <div class="section" id="section-subscriptions">
+        <div class="card">
+          <div class="card-header"><h3>⭐ Active Subscriptions</h3></div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead><tr><th>User ID</th><th>Expires</th><th>Days Left</th><th>Extra Slots</th></tr></thead>
+              <tbody id="subs-tbody"><tr><td colspan="4" class="loader">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== REFERRALS SECTION ===== -->
+      <div class="section" id="section-referrals">
+        <div class="card">
+          <div class="card-header"><h3>🏆 Referral Leaderboard</h3></div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead><tr><th>Rank</th><th>User ID</th><th>Referrals</th></tr></thead>
+              <tbody id="referrals-tbody"><tr><td colspan="3" class="loader">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== BANS SECTION ===== -->
+      <div class="section" id="section-bans">
+        <div class="card">
+          <div class="card-header">
+            <h3>🚫 Banned Users</h3>
+            <button class="btn btn-sm btn-danger" onclick="openBanModal()">🚫 Ban User</button>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead><tr><th>User ID</th><th>Reason</th><th>Banned At</th><th>Actions</th></tr></thead>
+              <tbody id="bans-tbody"><tr><td colspan="4" class="loader">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-overlay" id="ban-modal">
+          <div class="modal">
+            <h3>🚫 Ban User</h3>
+            <div class="form-group">
+              <label>User ID</label>
+              <input type="number" class="form-input" id="ban-user-id" placeholder="Enter user ID">
+            </div>
+            <div class="form-group">
+              <label>Reason</label>
+              <input type="text" class="form-input" id="ban-reason" placeholder="Reason for ban..." value="Violation of terms">
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-sm" onclick="closeModal('ban-modal')" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary)">Cancel</button>
+              <button class="btn btn-sm btn-danger" onclick="banUser()">🚫 Ban</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== BROADCAST SECTION ===== -->
+      <div class="section" id="section-broadcast">
+        <div class="card">
+          <div class="card-header"><h3>📢 Broadcast Message</h3></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label>Message (supports Markdown)</label>
+              <textarea class="form-input" id="broadcast-msg" placeholder="Write your broadcast message here...&#10;&#10;**Bold text**, _italic_, `code`, [link](url)"></textarea>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn btn-primary" onclick="sendBroadcast()" id="broadcast-btn">
+                📢 Send Broadcast
+              </button>
+              <span id="broadcast-status" style="font-size:13px;color:var(--text-muted)"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== SETTINGS SECTION ===== -->
+      <div class="section" id="section-settings">
+        <div class="card">
+          <div class="card-header"><h3>⚙️ Bot Settings</h3></div>
+          <div class="card-body">
+            <div class="toggle-wrap">
+              <div class="toggle-label">
+                <h4>🔒 Bot Lock</h4>
+                <p>Locks the bot for all non-admin users</p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="settings-lock" onchange="toggleLock()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-wrap">
+              <div class="toggle-label">
+                <h4>🛠 Maintenance Mode</h4>
+                <p>Shows maintenance message to all users</p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="settings-maintenance" onchange="toggleMaintenance()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div style="margin-top:20px">
+              <div class="form-group">
+                <label>Maintenance Message</label>
+                <input type="text" class="form-input" id="maint-msg-input" placeholder="Bot is under maintenance...">
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="saveMaintMsg()">💾 Save Message</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- .page-content -->
+  </div><!-- .main-content -->
+</div><!-- .dashboard -->
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

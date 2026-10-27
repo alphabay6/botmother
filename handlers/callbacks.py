@@ -104,11 +104,45 @@ def register(bot, admin_ids, subscriptions, bot_locked_ref):
             elif data.startswith('stoplog_'):
                 _cb_stoplog(call, bot, admin_ids)
 
+            # ==================== ZIP FILE PICKER ====================
+            elif data.startswith('zipsel_'):
+                _cb_zip_select(call, bot, admin_ids)
+
+            # ==================== FORCE JOIN VERIFY ====================
+            elif data == 'verify_force_join':
+                _cb_verify_force_join(call, bot, admin_ids)
+
+            # ==================== REFERRALS ====================
+            elif data == 'my_referrals':
+                bot.answer_callback_query(call.id)
+                bot._send_referral_info(bot, user_id, chat_id)
+            elif data in ('referral_leaderboard', 'referral_leaderboard_user'):
+                bot.answer_callback_query(call.id)
+                bot._send_leaderboard(bot, chat_id)
+
             # ==================== APPROVAL SYSTEM ====================
             elif data.startswith('approve_'):
                 _cb_approve(call, bot, admin_ids)
             elif data.startswith('reject_'):
                 _cb_reject_init(call, bot, admin_ids)
+
+            # ==================== ADMIN: TRIAL USERS ====================
+            elif data == 'trial_users':
+                _admin_required(call, bot, admin_ids)
+                if user_id in admin_ids:
+                    bot.answer_callback_query(call.id)
+                    trials = db.get_all_active_trials()
+                    if not trials:
+                        bot.send_message(chat_id, "✅ No active trial users.")
+                    else:
+                        lines = []
+                        for t in trials[:20]:
+                            expires = t['expires_at'][:10] if t['expires_at'] else '?'
+                            lines.append(f"• `{t['user_id']}` — expires {expires}")
+                        text = f"🆓 **Active Trial Users ({len(trials)}):**\n\n" + "\n".join(lines)
+                        if len(trials) > 20:
+                            text += f"\n\n...and {len(trials) - 20} more."
+                        bot.send_message(chat_id, text, parse_mode='Markdown')
 
             # ==================== ADMIN ====================
             elif data == 'admin_panel':
@@ -1065,3 +1099,91 @@ def _process_maintenance_msg(message, bot):
         return
     db.set_maintenance(db.get_maintenance_status()['enabled'], message=message.text)
     bot.reply_to(message, f"✅ Maintenance message updated to:\n_{message.text}_", parse_mode='Markdown')
+
+
+# ==================== ZIP FILE PICKER CALLBACK ====================
+
+def _cb_zip_select(call, bot, admin_ids):
+    """Handle ZIP file selection from the smart file picker."""
+    from handlers.files import _submit_zip_file
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    data = call.data  # format: zipsel_{user_id}_{index} or zipsel_cancel
+
+    bot.answer_callback_query(call.id)
+
+    if data == 'zipsel_cancel':
+        # Clean up and cancel
+        sel = db.get_zip_selection(user_id)
+        if sel:
+            import shutil
+            shutil.rmtree(sel['extracted_path'], ignore_errors=True)
+        db.clear_zip_selection(user_id)
+        try:
+            bot.edit_message_text("❌ ZIP upload cancelled.", chat_id, call.message.message_id)
+        except Exception:
+            bot.send_message(chat_id, "❌ ZIP upload cancelled.")
+        return
+
+    # Parse: zipsel_{owner_id}_{file_index}
+    try:
+        parts = data.split('_', 2)
+        file_index = int(parts[2])
+    except (ValueError, IndexError):
+        bot.send_message(chat_id, "❌ Invalid selection.")
+        return
+
+    sel = db.get_zip_selection(user_id)
+    if not sel:
+        bot.send_message(chat_id, "❌ ZIP selection expired. Please re-upload your ZIP file.")
+        return
+
+    files_list = sel['files']
+    if file_index < 0 or file_index >= len(files_list):
+        bot.send_message(chat_id, "❌ Invalid file selection.")
+        return
+
+    selected_file = files_list[file_index]
+    extracted_path = sel['extracted_path']
+    file_type = 'py' if selected_file.endswith('.py') else 'js'
+
+    try:
+        bot.edit_message_text(
+            f"✅ Selected: `{selected_file}`\n⏳ Submitting for admin approval...",
+            chat_id, call.message.message_id, parse_mode='Markdown'
+        )
+    except Exception:
+        pass
+
+    db.clear_zip_selection(user_id)
+    _submit_zip_file(bot, user_id, chat_id, extracted_path, selected_file, file_type, admin_ids)
+
+
+# ==================== FORCE JOIN VERIFY CALLBACK ====================
+
+def _cb_verify_force_join(call, bot, admin_ids):
+    """Verify that user has joined all required channels."""
+    from utils.force_join import check_force_join, send_force_join_message
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+
+    bot.answer_callback_query(call.id, "Verifying...")
+
+    not_joined = check_force_join(bot, user_id)
+    if not_joined:
+        try:
+            bot.delete_message(chat_id, call.message.message_id)
+        except Exception:
+            pass
+        send_force_join_message(bot, chat_id, not_joined)
+    else:
+        try:
+            bot.edit_message_text(
+                "✅ **Verified!** You've joined all required channels.\n\n"
+                "You can now use the bot freely. Type /start to begin!",
+                chat_id, call.message.message_id, parse_mode='Markdown'
+            )
+        except Exception:
+            bot.send_message(chat_id,
+                             "✅ **Verified!** You can now use the bot. Type /start!",
+                             parse_mode='Markdown')

@@ -96,6 +96,41 @@ def init_db(owner_id, admin_id):
                       env_value TEXT,
                       UNIQUE(user_id, file_name, env_key))''')
 
+        # --- Free Trial ---
+        c.execute('''CREATE TABLE IF NOT EXISTS user_trials
+                     (user_id INTEGER PRIMARY KEY,
+                      started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      expires_at TEXT,
+                      is_active INTEGER DEFAULT 1)''')
+
+        # --- Referrals ---
+        c.execute('''CREATE TABLE IF NOT EXISTS referrals
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      referrer_id INTEGER,
+                      referred_id INTEGER UNIQUE,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      is_valid INTEGER DEFAULT 1)''')
+
+        c.execute('''CREATE TABLE IF NOT EXISTS referral_rewards
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      user_id INTEGER,
+                      reward_type TEXT DEFAULT 'slot',
+                      reward_value INTEGER DEFAULT 1,
+                      granted_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+
+        # --- ZIP file selection state ---
+        c.execute('''CREATE TABLE IF NOT EXISTS zip_pending_selection
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      user_id INTEGER,
+                      zip_name TEXT,
+                      extracted_path TEXT,
+                      files_json TEXT,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+
+        # --- Settings ---
+        c.execute('''CREATE TABLE IF NOT EXISTS bot_settings
+                     (key TEXT PRIMARY KEY, value TEXT)''')
+
         # Insert defaults
         c.execute('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (owner_id,))
         if admin_id != owner_id:
@@ -751,4 +786,292 @@ def delete_script_env(user_id, file_name, env_key):
             return removed
         except Exception as e:
             logger.error(f"Error deleting script env var: {e}")
+            return False
+
+
+# ==================== FREE TRIAL ====================
+
+def activate_trial(user_id, trial_days=18):
+    """Activate a free trial for a user. Returns True if newly activated."""
+    from datetime import timedelta
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute('SELECT user_id FROM user_trials WHERE user_id=?', (user_id,))
+            if c.fetchone():
+                conn.close()
+                return False  # Already had a trial
+            started = datetime.now()
+            expires = started + timedelta(days=trial_days)
+            c.execute('''INSERT INTO user_trials (user_id, started_at, expires_at, is_active)
+                         VALUES (?, ?, ?, 1)''',
+                      (user_id, started.isoformat(), expires.isoformat()))
+            conn.commit()
+            conn.close()
+            logger.info(f"Activated {trial_days}-day trial for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error activating trial for {user_id}: {e}")
+            return False
+
+
+def get_trial(user_id):
+    """Get trial info for user. Returns dict or None."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT started_at, expires_at, is_active FROM user_trials WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {'started_at': row[0], 'expires_at': row[1], 'is_active': bool(row[2])}
+        return None
+    except Exception as e:
+        logger.error(f"Error getting trial for {user_id}: {e}")
+        return None
+
+
+def is_trial_active(user_id):
+    """Check if user has an active (non-expired) trial."""
+    trial = get_trial(user_id)
+    if not trial or not trial['is_active']:
+        return False
+    try:
+        expires = datetime.fromisoformat(trial['expires_at'])
+        if datetime.now() > expires:
+            # Expire it
+            expire_trial(user_id)
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def expire_trial(user_id):
+    """Mark a trial as expired/inactive."""
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute('UPDATE user_trials SET is_active=0 WHERE user_id=?', (user_id,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error expiring trial for {user_id}: {e}")
+
+
+def get_all_active_trials():
+    """Get all users with active trials."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT user_id, expires_at FROM user_trials WHERE is_active=1')
+        rows = c.fetchall()
+        conn.close()
+        return [{'user_id': r[0], 'expires_at': r[1]} for r in rows]
+    except Exception as e:
+        logger.error(f"Error getting active trials: {e}")
+        return []
+
+
+# ==================== REFERRAL SYSTEM ====================
+
+def add_referral(referrer_id, referred_id):
+    """Record a referral. Returns True if new."""
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            # Don't allow self-referral
+            if referrer_id == referred_id:
+                conn.close()
+                return False
+            # Check if referred_id was already referred by someone
+            c.execute('SELECT id FROM referrals WHERE referred_id=?', (referred_id,))
+            if c.fetchone():
+                conn.close()
+                return False
+            c.execute('''INSERT INTO referrals (referrer_id, referred_id, created_at, is_valid)
+                         VALUES (?, ?, ?, 1)''',
+                      (referrer_id, referred_id, datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+            logger.info(f"Referral: {referrer_id} referred {referred_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error adding referral: {e}")
+            return False
+
+
+def get_referral_count(user_id):
+    """Get total valid referrals made by user."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND is_valid=1', (user_id,))
+        count = c.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        logger.error(f"Error getting referral count for {user_id}: {e}")
+        return 0
+
+
+def get_referral_rewards_count(user_id):
+    """Get total rewards claimed by user."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT COALESCE(SUM(reward_value), 0) FROM referral_rewards WHERE user_id=?', (user_id,))
+        count = c.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        logger.error(f"Error getting referral rewards for {user_id}: {e}")
+        return 0
+
+
+def grant_referral_reward(user_id, reward_type='slot', reward_value=1):
+    """Grant a referral reward to a user."""
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute('''INSERT INTO referral_rewards (user_id, reward_type, reward_value, granted_at)
+                         VALUES (?, ?, ?, ?)''',
+                      (user_id, reward_type, reward_value, datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+            logger.info(f"Granted referral reward ({reward_type}={reward_value}) to user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error granting referral reward: {e}")
+            return False
+
+
+def get_referral_extra_slots(user_id):
+    """Get extra file slots earned from referrals."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('''SELECT COALESCE(SUM(reward_value), 0) FROM referral_rewards
+                     WHERE user_id=? AND reward_type='slot' ''', (user_id,))
+        slots = c.fetchone()[0]
+        conn.close()
+        return slots
+    except Exception as e:
+        logger.error(f"Error getting extra slots for {user_id}: {e}")
+        return 0
+
+
+def get_referral_leaderboard(limit=10):
+    """Get top referrers."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('''SELECT referrer_id, COUNT(*) as ref_count FROM referrals
+                     WHERE is_valid=1 GROUP BY referrer_id ORDER BY ref_count DESC LIMIT ?''', (limit,))
+        rows = c.fetchall()
+        conn.close()
+        return [{'user_id': r[0], 'referral_count': r[1]} for r in rows]
+    except Exception as e:
+        logger.error(f"Error getting referral leaderboard: {e}")
+        return []
+
+
+def get_referrer_of(user_id):
+    """Get the referrer of a given user."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT referrer_id FROM referrals WHERE referred_id=?', (user_id,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Error getting referrer of {user_id}: {e}")
+        return None
+
+
+# ==================== ZIP PENDING SELECTION ====================
+
+def save_zip_selection(user_id, zip_name, extracted_path, files_list):
+    """Store a pending ZIP selection state."""
+    import json
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            # Remove old pending for this user
+            c.execute('DELETE FROM zip_pending_selection WHERE user_id=?', (user_id,))
+            c.execute('''INSERT INTO zip_pending_selection (user_id, zip_name, extracted_path, files_json, created_at)
+                         VALUES (?, ?, ?, ?, ?)''',
+                      (user_id, zip_name, extracted_path, json.dumps(files_list), datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Error saving zip selection state: {e}")
+            return False
+
+
+def get_zip_selection(user_id):
+    """Get pending ZIP selection state for user."""
+    import json
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT zip_name, extracted_path, files_json FROM zip_pending_selection WHERE user_id=?', (user_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {'zip_name': row[0], 'extracted_path': row[1], 'files': json.loads(row[2])}
+        return None
+    except Exception as e:
+        logger.error(f"Error getting zip selection state: {e}")
+        return None
+
+
+def clear_zip_selection(user_id):
+    """Clear pending ZIP selection state for user."""
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute('DELETE FROM zip_pending_selection WHERE user_id=?', (user_id,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error clearing zip selection: {e}")
+
+
+# ==================== BOT SETTINGS ====================
+
+def get_setting(key, default=None):
+    """Get a bot setting by key."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute('SELECT value FROM bot_settings WHERE key=?', (key,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else default
+    except Exception as e:
+        logger.error(f"Error getting setting {key}: {e}")
+        return default
+
+
+def set_setting(key, value):
+    """Set a bot setting."""
+    with DB_LOCK:
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute('INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)', (key, str(value)))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Error setting {key}: {e}")
             return False

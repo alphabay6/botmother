@@ -15,6 +15,7 @@ def main_menu_inline(user_id, admin_ids, bot_locked, pending_count=0):
         types.InlineKeyboardButton('📂 My Files', callback_data='check_files'),
         types.InlineKeyboardButton('⚡ Bot Speed', callback_data='speed'),
         types.InlineKeyboardButton('📊 Statistics', callback_data='stats'),
+        types.InlineKeyboardButton('👥 Referrals', callback_data='my_referrals'),
         types.InlineKeyboardButton('📞 Contact Owner',
                                    url=f'https://t.me/{YOUR_USERNAME.replace("@", "")}'),
     ]
@@ -25,13 +26,14 @@ def main_menu_inline(user_id, admin_ids, bot_locked, pending_count=0):
         markup.add(buttons[1], buttons[2])
         markup.add(types.InlineKeyboardButton('👑 Admin Panel', callback_data='admin_panel'))
         markup.add(buttons[3], buttons[4])
-        markup.add(buttons[5])
+        markup.add(buttons[5], buttons[6])
     else:
         markup.add(buttons[0])
         markup.add(buttons[1], buttons[2])
         markup.add(buttons[3])
         markup.add(buttons[4])
         markup.add(buttons[5])
+        markup.add(buttons[6])
 
     markup.add(types.InlineKeyboardButton('⏱ Uptime', callback_data='uptime'))
     return markup
@@ -45,7 +47,7 @@ def reply_keyboard_main(user_id, admin_ids):
         ["📢 Updates Channel", "⏱ Uptime"],
         ["📤 Upload File", "📂 My Files"],
         ["⚡ Bot Speed", "📊 Statistics"],
-        ["📞 Contact Owner"],
+        ["👥 My Referrals", "📞 Contact Owner"],
     ]
 
     admin_buttons = [
@@ -53,7 +55,8 @@ def reply_keyboard_main(user_id, admin_ids):
         ["📤 Upload File", "📂 My Files"],
         ["👑 Admin Panel"],
         ["⚡ Bot Speed", "📊 Statistics"],
-        ["📞 Contact Owner", "⏱ Uptime"],
+        ["👥 My Referrals", "📞 Contact Owner"],
+        ["⏱ Uptime"],
     ]
 
     layout = admin_buttons if user_id in admin_ids else user_buttons
@@ -151,7 +154,9 @@ def admin_panel_keyboard(bot_locked=False, pending_count=0):
         types.InlineKeyboardButton('🟢 Run All Scripts', callback_data='run_all_scripts'),
         types.InlineKeyboardButton('🔒 Lock' if not bot_locked else '🔓 Unlock', callback_data='lock_bot' if not bot_locked else 'unlock_bot'),
         types.InlineKeyboardButton('🛠 Maintenance', callback_data='maintenance_mode'),
-        types.InlineKeyboardButton('👥 Manage Admins', callback_data='manage_admins')
+        types.InlineKeyboardButton('👥 Manage Admins', callback_data='manage_admins'),
+        types.InlineKeyboardButton('🏆 Referral Leaderboard', callback_data='referral_leaderboard'),
+        types.InlineKeyboardButton('🆓 Trial Users', callback_data='trial_users'),
     )
     markup.add(types.InlineKeyboardButton('🔙 Back to Main', callback_data='back_to_main'))
     return markup
@@ -224,4 +229,36 @@ def maintenance_keyboard(is_enabled):
         markup.add(types.InlineKeyboardButton('🔴 Enable Maintenance', callback_data='maintenance_on'))
     markup.add(types.InlineKeyboardButton('✏️ Set Message', callback_data='maintenance_msg'))
     markup.add(types.InlineKeyboardButton('🔙 Back', callback_data='admin_panel'))
+    return markup
+
+
+def zip_file_picker_keyboard(user_id, files_list):
+    """Build keyboard for ZIP file selection."""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for i, fname in enumerate(files_list[:20]):  # Max 20 files shown
+        ext = fname.rsplit('.', 1)[-1].upper() if '.' in fname else '?'
+        markup.add(types.InlineKeyboardButton(
+            f"{'🐍' if ext == 'PY' else '🟨' if ext == 'JS' else '📄'} {fname}",
+            callback_data=f"zipsel_{user_id}_{i}"
+        ))
+    markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="zipsel_cancel"))
+    return markup
+
+
+def referral_keyboard(user_id, bot_username):
+    """Build referral info keyboard."""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    ref_link = f"https://t.me/{bot_username}?start=ref{user_id}"
+    markup.add(types.InlineKeyboardButton("🔗 Copy Referral Link", url=ref_link))
+    markup.add(types.InlineKeyboardButton("🏆 Leaderboard", callback_data="referral_leaderboard_user"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
+    return markup
+
+
+def force_join_keyboard(channels_info):
+    """Build force join keyboard with channel buttons and verify button."""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for display, link in channels_info:
+        markup.add(types.InlineKeyboardButton(f"📣 Join {display}", url=link))
+    markup.add(types.InlineKeyboardButton("✅ I've Joined — Verify", callback_data="verify_force_join"))
     return markup

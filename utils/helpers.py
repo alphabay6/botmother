@@ -19,6 +19,7 @@ def get_uptime():
 
 def get_user_status(user_id, owner_id, admin_ids, subscriptions):
     """Determine user status and subscription info."""
+    import database as db
     if user_id == owner_id:
         return "👑 Owner", ""
     elif user_id in admin_ids:
@@ -30,18 +31,39 @@ def get_user_status(user_id, owner_id, admin_ids, subscriptions):
             return "⭐ Premium", f"\n📅 Subscription expires in: {days_left} days"
         else:
             return "Free User (Expired)", ""
-    return "Free User", ""
+    else:
+        # Check trial
+        trial = db.get_trial(user_id)
+        if trial and trial['is_active']:
+            try:
+                expires = datetime.fromisoformat(trial['expires_at'])
+                if expires > datetime.now():
+                    days_left = (expires - datetime.now()).days
+                    return "🆓 Free Trial", f"\n⏳ Trial expires in: {days_left} days"
+            except Exception:
+                pass
+        return "👤 Free User", ""
 
 
 def get_file_limit(user_id, owner_id, admin_ids, subscriptions, limits):
-    """Get user's file upload limit."""
+    """Get user's file upload limit, including referral bonus slots and trial."""
+    import database as db
+    from config import FREE_TRIAL_LIMIT
     if user_id == owner_id:
         return float('inf')
     if user_id in admin_ids:
         return limits['admin']
     if user_id in subscriptions and subscriptions[user_id] > datetime.now():
-        return limits['subscribed']
-    return limits['free']
+        base = limits['subscribed']
+        extra = db.get_referral_extra_slots(user_id)
+        return base + extra
+    # Check trial
+    if db.is_trial_active(user_id):
+        extra = db.get_referral_extra_slots(user_id)
+        return FREE_TRIAL_LIMIT + extra
+    # Regular free user — get bonus from referrals only
+    extra = db.get_referral_extra_slots(user_id)
+    return limits.get('free', 0) + extra
 
 
 def format_limit(limit):

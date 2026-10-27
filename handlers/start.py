@@ -1,14 +1,16 @@
 """
 Start & Help handlers — welcome message, /start, /help, /ping, /uptime.
+Includes: force-join check, referral tracking, 18-day free trial activation.
 """
 import time
 import logging
 from datetime import datetime
 
 import database as db
-from config import OWNER_ID, YOUR_USERNAME, UPDATE_CHANNEL
+from config import OWNER_ID, YOUR_USERNAME, UPDATE_CHANNEL, FREE_TRIAL_DAYS, REFERRALS_PER_REWARD
 from utils.helpers import get_uptime, get_user_status, get_file_limit, format_limit
 from utils.keyboards import reply_keyboard_main, main_menu_inline
+from utils.force_join import check_force_join, send_force_join_message
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,20 @@ def register(bot, admin_ids, subscriptions, bot_locked_ref):
             bot.send_message(chat_id, "🔒 Bot is locked by admin. Try later.")
             return
 
+        # --- Force Join Check ---
+        if user_id not in admin_ids:
+            not_joined = check_force_join(bot, user_id)
+            if not_joined:
+                send_force_join_message(bot, chat_id, not_joined)
+                return
+
+        # --- Handle referral parameter ---
+        ref_code = None
+        if message.text and len(message.text.split()) > 1:
+            param = message.text.split()[1]
+            if param.startswith('ref') and param[3:].isdigit():
+                ref_code = int(param[3:])
+
         # Profile info
         photo_file_id = None
         try:
@@ -49,8 +65,35 @@ def register(bot, admin_ids, subscriptions, bot_locked_ref):
 
         # Track new user
         all_users = db.get_all_active_users()
-        if user_id not in all_users:
+        is_new_user = user_id not in all_users
+        if is_new_user:
             db.add_active_user(user_id)
+
+            # --- Process referral ---
+            if ref_code and ref_code != user_id:
+                added = db.add_referral(ref_code, user_id)
+                if added:
+                    # Check and grant rewards to referrer
+                    try:
+                        bot._check_and_grant_referral_reward(bot, ref_code)
+                    except AttributeError:
+                        pass  # referral handler not registered yet
+                    # Notify referrer
+                    try:
+                        bot.send_message(
+                            ref_code,
+                            f"👥 **New Referral!**\n\n"
+                            f"Someone joined using your referral link!\n"
+                            f"✅ Your referral count increased.\n\n"
+                            f"Use /referrals to check your progress.",
+                            parse_mode='Markdown'
+                        )
+                    except Exception:
+                        pass
+
+            # --- Activate Free Trial ---
+            trial_activated = db.activate_trial(user_id, trial_days=FREE_TRIAL_DAYS)
+
             # Notify owner of new user
             try:
                 user_bio = "N/A"
@@ -63,7 +106,9 @@ def register(bot, admin_ids, subscriptions, bot_locked_ref):
                     f"👤 Name: {user_name}\n"
                     f"📱 Username: @{user_username or 'N/A'}\n"
                     f"🆔 ID: `{user_id}`\n"
-                    f"📝 Bio: {user_bio}"
+                    f"📝 Bio: {user_bio}\n"
+                    f"{'🎁 Free trial activated!' if trial_activated else ''}"
+                    f"{'🔗 Referred by: ' + str(ref_code) if ref_code else ''}"
                 )
                 bot.send_message(OWNER_ID, notification, parse_mode='Markdown')
                 if photo_file_id:
@@ -73,18 +118,37 @@ def register(bot, admin_ids, subscriptions, bot_locked_ref):
 
         # Build welcome message
         status, expiry_info = get_user_status(user_id, OWNER_ID, admin_ids, subscriptions)
-        limits = {'free': 20, 'subscribed': 15, 'admin': 999}
+        limits = {'free': 0, 'subscribed': 15, 'admin': 999}
         file_limit = get_file_limit(user_id, OWNER_ID, admin_ids, subscriptions, limits)
         current_files = db.get_user_file_count(user_id)
         limit_str = format_limit(file_limit)
         pending_count = db.get_pending_count() if user_id in admin_ids else 0
 
+        # Trial info
+        trial_info = ""
+        trial = db.get_trial(user_id)
+        if trial and trial['is_active']:
+            try:
+                expires = datetime.fromisoformat(trial['expires_at'])
+                if expires > datetime.now():
+                    days_left = (expires - datetime.now()).days
+                    trial_info = f"\n🆓 **Free Trial:** {days_left} days remaining"
+            except Exception:
+                pass
+
+        # Referral info
+        ref_count = db.get_referral_count(user_id)
+        ref_progress = ref_count % REFERRALS_PER_REWARD
+        ref_info = f"\n👥 **Referrals:** {ref_count} ({ref_progress}/{REFERRALS_PER_REWARD} to next reward)"
+
         welcome = (
-            f"👋 Welcome, **{user_name}**!\n\n"
+            f"👋 Welcome{'back' if not is_new_user else ''}, **{user_name}**!\n\n"
             f"🆔 User ID: `{user_id}`\n"
             f"📱 Username: `@{user_username or 'Not set'}`\n"
             f"🏷 Status: {status}{expiry_info}\n"
-            f"📂 Files: {current_files} / {limit_str}\n\n"
+            f"📂 Files: {current_files} / {limit_str}"
+            f"{trial_info}"
+            f"{ref_info}\n\n"
             f"📤 Upload `.py` / `.js` scripts or `.zip` archives.\n"
             f"⚠️ All files require **admin approval** before running.\n\n"
             f"Use the buttons below or type commands."
@@ -139,12 +203,14 @@ def register(bot, admin_ids, subscriptions, bot_locked_ref):
             pending = db.get_pending_count()
             banned = len(db.get_banned_users())
             maint = db.get_maintenance_status()
+            trial_count = len(db.get_all_active_trials())
             stats += (
                 f"\n\n🔧 **Admin Info**\n"
                 f"🔒 Bot Locked: `{'Yes' if bot_locked_ref[0] else 'No'}`\n"
                 f"🛠 Maintenance: `{'ON' if maint['enabled'] else 'OFF'}`\n"
                 f"📋 Pending Approvals: `{pending}`\n"
-                f"🚫 Banned Users: `{banned}`"
+                f"🚫 Banned Users: `{banned}`\n"
+                f"🆓 Active Trials: `{trial_count}`"
             )
 
         bot.reply_to(message, stats, parse_mode='Markdown')
